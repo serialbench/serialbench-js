@@ -6,8 +6,12 @@
   "description": "JavaScript (wasm) harness of the cross-language serialbench family — canonical fixtures, shared data schema",
   "license": "BSD-2-Clause",
   "dependencies": {
+    "fast-xml-parser": "^5.11.2",
+    "htmlparser2": "^12.0.0",
     "leptris": "^0.1.23",
+    "smol-toml": "^1.9.1",
     "teptris": "^0.3.11",
+    "yaml": "^2.9.1",
     "yeptris": "^0.1.0"
   }
 }
