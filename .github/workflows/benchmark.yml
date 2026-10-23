@@ -1,0 +1,188 @@
+name: benchmark-weekly
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - '**.md'
+  schedule:
+    # Run benchmarks weekly on Sundays at 3:30 AM UTC
+    - cron: '30 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "js-site-deploy"
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      platforms: ${{ steps.set-matrix.outputs.platforms }}
+      run-date: ${{ steps.set-matrix.outputs.run-date }}
+    steps:
+      - name: Set matrix configurations
+        id: set-matrix
+        run: |
+          echo 'platforms=["ubuntu-24.04", "ubuntu-24.04-arm", "macos-26", "windows-2025"]' >> $GITHUB_OUTPUT
+          echo "run-date=$(date -u +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+  benchmark:
+    runs-on: ${{ matrix.platform }}
+    needs: setup
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJson(needs.setup.outputs.platforms) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install --no-fund --no-audit
+
+      - name: Load canonical fixtures
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/serialbench/fixtures.git fixtures
+          (cd fixtures && sha256sum -c SHA256SUMS) || (cd fixtures && shasum -a 256 -c SHA256SUMS)
+
+      - name: Benchmark xml
+        continue-on-error: true
+        shell: bash
+        env:
+          SERIALBENCH_PLATFORM: ${{ matrix.platform }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          if [ "${{ github.run_attempt }}" -gt 1 ] && .github/scripts/format-status.sh xml "$NODE_VERSION" "${{ matrix.platform }}"; then
+            echo "xml already in the data repo — skipping (gap-filling rerun)"
+            exit 0
+          fi
+          mkdir -p results/xml
+          node harness.mjs fixtures results/xml/results.yaml xml
+
+      - name: Upload xml
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ matrix.platform }}-js-xml
+          path: results/xml
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Push xml to data repo
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          .github/scripts/push-to-data.sh xml "$NODE_VERSION" "${{ matrix.platform }}"
+
+      - name: Benchmark yaml
+        continue-on-error: true
+        shell: bash
+        env:
+          SERIALBENCH_PLATFORM: ${{ matrix.platform }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          if [ "${{ github.run_attempt }}" -gt 1 ] && .github/scripts/format-status.sh yaml "$NODE_VERSION" "${{ matrix.platform }}"; then
+            echo "yaml already in the data repo — skipping (gap-filling rerun)"
+            exit 0
+          fi
+          mkdir -p results/yaml
+          node harness.mjs fixtures results/yaml/results.yaml yaml
+
+      - name: Upload yaml
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ matrix.platform }}-js-yaml
+          path: results/yaml
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Push yaml to data repo
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          .github/scripts/push-to-data.sh yaml "$NODE_VERSION" "${{ matrix.platform }}"
+
+      - name: Benchmark toml
+        continue-on-error: true
+        shell: bash
+        env:
+          SERIALBENCH_PLATFORM: ${{ matrix.platform }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          if [ "${{ github.run_attempt }}" -gt 1 ] && .github/scripts/format-status.sh toml "$NODE_VERSION" "${{ matrix.platform }}"; then
+            echo "toml already in the data repo — skipping (gap-filling rerun)"
+            exit 0
+          fi
+          mkdir -p results/toml
+          node harness.mjs fixtures results/toml/results.yaml toml
+
+      - name: Upload toml
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ matrix.platform }}-js-toml
+          path: results/toml
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Push toml to data repo
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          .github/scripts/push-to-data.sh toml "$NODE_VERSION" "${{ matrix.platform }}"
+
+      - name: Verify leg completeness
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          MISSING=""
+          for FMT in xml yaml toml; do
+            if .github/scripts/format-status.sh "$FMT" "$NODE_VERSION" "${{ matrix.platform }}"; then
+              echo "$FMT: in data repo"
+            else
+              echo "$FMT: MISSING from data repo"
+              MISSING="$MISSING $FMT"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::formats never pushed:${MISSING} — failing the leg so autoheal fills the gap"
+            exit 1
+          fi

@@ -1,0 +1,13 @@
+{
+  "name": "serialbench-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "JavaScript (wasm) harness of the cross-language serialbench family — canonical fixtures, shared data schema",
+  "license": "BSD-2-Clause",
+  "dependencies": {
+    "leptris": "^0.1.23",
+    "teptris": "^0.3.11",
+    "yeptris": "^0.1.0"
+  }
+}
