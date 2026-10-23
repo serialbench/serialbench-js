@@ -10,11 +10,19 @@ import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import * as leptris from "leptris";
 import * as yeptris from "yeptris";
 import * as teptris from "teptris";
+import { XMLParser as FxpParser } from "fast-xml-parser";
+import { parseDocument as Hp2ParseDocument } from "htmlparser2";
+import { parse as Yaml22Parse, stringify as Yaml22Stringify } from "yaml";
+import { parse as SmolTomlParse, stringify as SmolTomlStringify } from "smol-toml";
 
 // Adapter versions, kept in lockstep with package.json dependencies.
 const LEPTRIS_VERSION = "0.1.23";
 const YEPTRIS_VERSION = "0.1.0";
 const TEPTRIS_VERSION = "0.3.11";
+const FXP_VERSION = "5.11.2";
+const HP2_VERSION = "12.0.0";
+const YAML22_VERSION = "2.9.1";
+const SMOL_TOML_VERSION = "1.9.1";
 
 const WARMUP = 3;
 const ITERS = { small: 10, medium: 3, large: 1 };
@@ -47,6 +55,17 @@ function readFixture(dir, size, ext) {
   return readFileSync(p, "utf8");
 }
 
+async function benchJson(ctx, size) {
+  const data = readFixture(ctx.dir, size, "json");
+  if (data == null) return;
+  await ctx.bench("native-json", "json", "parsing", size, async () => {
+    JSON.parse(data);
+  });
+  await ctx.bench("native-json", "json", "generation", size, async () => {
+    JSON.stringify(JSON.parse(data));
+  });
+}
+
 async function benchXml(ctx, size) {
   const data = readFixture(ctx.dir, size, "xml");
   if (data == null) return;
@@ -62,6 +81,10 @@ async function benchXml(ctx, size) {
       await leptris.close(id);
     }
   });
+  const fxp = new FxpParser();
+  await ctx.bench("fast-xml-parser", "xml", "parsing", size, async () => {
+    fxp.parse(data);
+  });
   await ctx.bench("leptris", "xml", "xpath", size, async () => {
     const id = await leptris.load(data);
     try {
@@ -74,6 +97,14 @@ async function benchXml(ctx, size) {
   });
 }
 
+async function benchHtml(ctx, size) {
+  const data = readFixture(ctx.dir, size, "html");
+  if (data == null) return;
+  await ctx.bench("htmlparser2", "html", "parsing", size, async () => {
+    Hp2ParseDocument(data);
+  });
+}
+
 async function benchYaml(ctx, size) {
   const data = readFixture(ctx.dir, size, "yaml");
   if (data == null) return;
@@ -82,6 +113,12 @@ async function benchYaml(ctx, size) {
   });
   await ctx.bench("yeptris", "yaml", "generation", size, async () => {
     yeptris.dump(yeptris.load(data));
+  });
+  await ctx.bench("yaml22", "yaml", "parsing", size, async () => {
+    Yaml22Parse(data);
+  });
+  await ctx.bench("yaml22", "yaml", "generation", size, async () => {
+    Yaml22Stringify(Yaml22Parse(data));
   });
 }
 
@@ -93,6 +130,12 @@ async function benchToml(ctx, size) {
   });
   await ctx.bench("teptris", "toml", "generation", size, async () => {
     ctx.teptris.dump(ctx.teptris.loads(data));
+  });
+  await ctx.bench("smol-toml", "toml", "parsing", size, async () => {
+    SmolTomlParse(data);
+  });
+  await ctx.bench("smol-toml", "toml", "generation", size, async () => {
+    SmolTomlStringify(SmolTomlParse(data));
   });
 }
 
@@ -118,7 +161,7 @@ async function main() {
     console.error("usage: node harness.mjs <fixtures-dir> <out-yaml> [format]");
     process.exit(2);
   }
-  const formats = want ? [want] : ["xml", "yaml", "toml"];
+  const formats = want ? [want] : ["json", "xml", "html", "yaml", "toml"];
 
   // leptris exposes init(); yeptris initializes lazily inside load/dump.
   if (typeof leptris.init === "function") await leptris.init();
@@ -127,7 +170,9 @@ async function main() {
   const teptrisApi = await teptris.init();
   const ctx = { dir: fixtures, bench, teptris: teptrisApi };
   for (const size of SIZES) {
+    if (formats.includes("json")) await benchJson(ctx, size);
     if (formats.includes("xml")) await benchXml(ctx, size);
+    if (formats.includes("html")) await benchHtml(ctx, size);
     if (formats.includes("yaml")) await benchYaml(ctx, size);
     if (formats.includes("toml")) await benchToml(ctx, size);
   }
@@ -142,13 +187,18 @@ async function main() {
   out += `  runtime_version: ${runtimeVersion}\n`;
   out += "benchmark_config:\n";
   out += "  name: js-full\n";
-  out += "  formats: [xml, yaml, toml]\n";
+  out += "  formats: [json, xml, html, yaml, toml]\n";
   out += "  operations: [parsing, generation, xpath]\n";
   out += "benchmark_result:\n";
   out += "  serializers:\n";
   out += `    - {name: leptris, format: xml, version: '${LEPTRIS_VERSION}', features: {xpath: true, wasm: true}}\n`;
   out += `    - {name: yeptris, format: yaml, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: teptris, format: toml, version: '${TEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: native-json, format: json, version: '${runtimeVersion}', features: {native: true}}\n`;
+  out += `    - {name: fast-xml-parser, format: xml, version: '${FXP_VERSION}', features: {}}\n`;
+  out += `    - {name: htmlparser2, format: html, version: '${HP2_VERSION}', features: {}}\n`;
+  out += `    - {name: yaml22, format: yaml, version: '${YAML22_VERSION}', features: {}}\n`;
+  out += `    - {name: smol-toml, format: toml, version: '${SMOL_TOML_VERSION}', features: {}}\n`;
   for (const op of ["parsing", "generation", "xpath"]) {
     out += `  ${op}:\n`;
     for (const row of rows) {
