@@ -57,6 +57,78 @@ jobs:
           git clone --depth 1 https://github.com/serialbench/fixtures.git fixtures
           (cd fixtures && sha256sum -c SHA256SUMS) || (cd fixtures && shasum -a 256 -c SHA256SUMS)
 
+      - name: Benchmark json
+        continue-on-error: true
+        shell: bash
+        env:
+          SERIALBENCH_PLATFORM: ${{ matrix.platform }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          if [ "${{ github.run_attempt }}" -gt 1 ] && .github/scripts/format-status.sh json "$NODE_VERSION" "${{ matrix.platform }}"; then
+            echo "json already in the data repo — skipping (gap-filling rerun)"
+            exit 0
+          fi
+          mkdir -p results/json
+          node harness.mjs fixtures results/json/results.yaml json
+
+      - name: Upload json
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ matrix.platform }}-js-json
+          path: results/json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Push json to data repo
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          .github/scripts/push-to-data.sh json "$NODE_VERSION" "${{ matrix.platform }}"
+
+      - name: Benchmark html
+        continue-on-error: true
+        shell: bash
+        env:
+          SERIALBENCH_PLATFORM: ${{ matrix.platform }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          if [ "${{ github.run_attempt }}" -gt 1 ] && .github/scripts/format-status.sh html "$NODE_VERSION" "${{ matrix.platform }}"; then
+            echo "html already in the data repo — skipping (gap-filling rerun)"
+            exit 0
+          fi
+          mkdir -p results/html
+          node harness.mjs fixtures results/html/results.yaml html
+
+      - name: Upload html
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ matrix.platform }}-js-html
+          path: results/html
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Push html to data repo
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          DATA_RUN_DATE: ${{ needs.setup.outputs.run-date }}
+        run: |
+          export NODE_VERSION="$(node --version | sed 's/^v//')"
+          .github/scripts/push-to-data.sh html "$NODE_VERSION" "${{ matrix.platform }}"
+
       - name: Benchmark xml
         continue-on-error: true
         shell: bash
@@ -174,7 +246,7 @@ jobs:
         run: |
           export NODE_VERSION="$(node --version | sed 's/^v//')"
           MISSING=""
-          for FMT in xml yaml toml; do
+          for FMT in json xml html yaml toml; do
             if .github/scripts/format-status.sh "$FMT" "$NODE_VERSION" "${{ matrix.platform }}"; then
               echo "$FMT: in data repo"
             else
