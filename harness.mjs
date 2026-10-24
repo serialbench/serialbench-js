@@ -116,3 +116,97 @@ async function benchYaml(ctx, size) {
     Yaml22Stringify(Yaml22Parse(data));
   });
 }
+
+async function benchToml(ctx, size) {
+  const data = readFixture(ctx.dir, size, "toml");
+  if (data == null) return;
+  await ctx.bench("teptris", "toml", "parsing", size, async () => {
+    ctx.teptris.loads(data);
+  });
+  await ctx.bench("teptris", "toml", "generation", size, async () => {
+    ctx.teptris.dump(ctx.teptris.loads(data));
+  });
+  await ctx.bench("smol-toml", "toml", "parsing", size, async () => {
+    SmolTomlParse(data);
+  });
+  await ctx.bench("smol-toml", "toml", "generation", size, async () => {
+    SmolTomlStringify(SmolTomlParse(data));
+  });
+}
+
+function osFamily() {
+  switch (process.platform) {
+    case "darwin": return "macos";
+    case "linux": return "linux";
+    case "win32": return "windows";
+    default: return process.platform;
+  }
+}
+
+function arch() {
+  return process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x86_64" : process.arch;
+}
+
+const runtimeVersion = process.version.replace(/^v/, "");
+const platformLabel = process.env.SERIALBENCH_PLATFORM ?? `local-${arch()}`;
+
+async function main() {
+  const [, , fixtures, outPath, want] = process.argv;
+  if (!fixtures || !outPath) {
+    console.error("usage: node harness.mjs <fixtures-dir> <out-yaml> [format]");
+    process.exit(2);
+  }
+  const formats = want ? [want] : ["json", "xml", "html", "yaml", "toml"];
+
+  // leptris exposes init(); yeptris initializes lazily inside load/dump.
+  if (typeof leptris.init === "function") await leptris.init();
+
+  // teptris's init() returns the API object; its namespace exports only init.
+  const teptrisApi = await teptris.init();
+  const ctx = { dir: fixtures, bench, teptris: teptrisApi };
+
+  for (const size of SIZES) {
+    if (formats.includes("json")) await benchJson(ctx, size);
+    if (formats.includes("xml")) await benchXml(ctx, size);
+    if (formats.includes("html")) await benchHtml(ctx, size);
+    if (formats.includes("yaml")) await benchYaml(ctx, size);
+    if (formats.includes("toml")) await benchToml(ctx, size);
+  }
+
+  let out = "";
+  out += "platform:\n";
+  out += `  platform_string: ${platformLabel}-js-${runtimeVersion}\n`;
+  out += "  kind: wasm\n";
+  out += `  os: ${osFamily()}\n`;
+  out += `  arch: ${arch()}\n`;
+  out += "  runtime: js\n";
+  out += `  runtime_version: ${runtimeVersion}\n`;
+  out += "benchmark_config:\n";
+  out += "  name: js-full\n";
+  out += "  formats: [json, xml, html, yaml, toml]\n";
+  out += "  operations: [parsing, generation, xpath]\n";
+  out += "benchmark_result:\n";
+  out += "  serializers:\n";
+  out += `    - {name: leptris, format: xml, version: '${LEPTRIS_VERSION}', features: {xpath: true, wasm: true}}\n`;
+  out += `    - {name: teptris, format: toml, version: '${TEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: native-json, format: json, version: '${runtimeVersion}', features: {native: true}}\n`;
+  out += `    - {name: fast-xml-parser, format: xml, version: '${FXP_VERSION}', features: {}}\n`;
+  out += `    - {name: htmlparser2, format: html, version: '${HP2_VERSION}', features: {}}\n`;
+  out += `    - {name: yaml22, format: yaml, version: '${YAML22_VERSION}', features: {}}\n`;
+  out += `    - {name: smol-toml, format: toml, version: '${SMOL_TOML_VERSION}', features: {}}\n`;
+  for (const op of ["parsing", "generation", "xpath"]) {
+    out += `  ${op}:\n`;
+    for (const row of rows) {
+      if (row.op === op) {
+        out += `    - {adapter: ${row.adapter}, format: ${row.format}, data_size: ${row.size}, time_per_iteration: ${row.time_per_iteration.toFixed(9)}, iterations_per_second: ${row.iterations_per_second.toFixed(6)}}\n`;
+      }
+    }
+  }
+  writeFileSync(outPath, out);
+  console.log(`rows: ${rows.length}`);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
