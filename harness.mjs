@@ -16,7 +16,7 @@ import { parse as SmolTomlParse, stringify as SmolTomlStringify } from "smol-tom
 
 // Adapter versions, kept in lockstep with package.json dependencies.
 const LEPTRIS_VERSION = "0.1.23";
-const TEPTRIS_VERSION = "0.3.11";
+const TEPTRIS_VERSION = "0.3.13";
 const FXP_VERSION = "5.11.2";
 const HP2_VERSION = "12.0.0";
 const YAML22_VERSION = "2.9.1";
