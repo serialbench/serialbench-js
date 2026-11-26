@@ -9,14 +9,16 @@ import { performance } from "node:perf_hooks";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import * as leptris from "leptris";
 import * as teptris from "teptris";
+import * as yeptris from "yeptris";
 import { XMLParser as FxpParser } from "fast-xml-parser";
 import { parseDocument as Hp2ParseDocument } from "htmlparser2";
 import { parse as Yaml22Parse, stringify as Yaml22Stringify } from "yaml";
 import { parse as SmolTomlParse, stringify as SmolTomlStringify } from "smol-toml";
 
 // Adapter versions, kept in lockstep with package.json dependencies.
-const LEPTRIS_VERSION = "0.1.23";
-const TEPTRIS_VERSION = "0.3.13";
+const LEPTRIS_VERSION = "0.1.82";
+const TEPTRIS_VERSION = "0.3.41";
+const YEPTRIS_VERSION = "0.6.87";
 const FXP_VERSION = "5.11.2";
 const HP2_VERSION = "12.0.0";
 const YAML22_VERSION = "2.9.1";
@@ -67,10 +69,27 @@ async function benchJson(ctx, size) {
 async function benchXml(ctx, size) {
   const data = readFixture(ctx.dir, size, "xml");
   if (data == null) return;
+  // validation faces: per-size schema follows the document shape
+  // (config/users/dataset), compiled/parsed once per stem
+  const stem = size === "small" ? "config" : size === "medium" ? "users" : "dataset";
+  const xsdId = await leptris.xsdCompile(readFixture(ctx.dir, stem, "xsd"));
+  const schId = await leptris.schematronCompile(readFixture(ctx.dir, stem, "sch"));
   await ctx.bench("leptris", "xml", "parsing", size, async () => {
     const id = await leptris.load(data);
     await leptris.close(id);
   });
+  await ctx.bench("leptris-xsd", "xml", "validation", size, async () => {
+    const id = await leptris.load(data);
+    await leptris.xsdValidate(xsdId, id);
+    await leptris.close(id);
+  });
+  await ctx.bench("leptris-schematron", "xml", "validation", size, async () => {
+    const id = await leptris.load(data);
+    await leptris.schematronValidate(schId, id);
+    await leptris.close(id);
+  });
+  await leptris.xsdClose(xsdId);
+  await leptris.schematronClose(schId);
   await ctx.bench("leptris", "xml", "generation", size, async () => {
     const id = await leptris.load(data);
     try {
@@ -104,17 +123,59 @@ async function benchHtml(ctx, size) {
 }
 
 async function benchYaml(ctx, size) {
-  // yeptris-wasm 0.1.0 returns silently empty results (load -> {}, dump ->
-  // undefined) — yeptris-ts#4. Disabled until the wasm exports are wired;
-  // the yaml field is covered by yaml22 meanwhile.
   const data = readFixture(ctx.dir, size, "yaml");
   if (data == null) return;
+  // yeptris-wasm restored: 0.6.8x fixed the silent-empty core (#4) and
+  // ships the compiled-plan face (#48)
+  await ctx.bench("yeptris", "yaml", "parsing", size, async () => {
+    await yeptris.load(data);
+  });
+  await ctx.bench("yeptris", "yaml", "generation", size, async () => {
+    const doc = await yeptris.load(data);
+    await yeptris.dump(doc);
+  });
+  await ctx.bench("yeptris-plan", "yaml", "plan", size, async () => {
+    const plan = await yeptrisPlanFor(data);
+    await plan.walk(data);
+  });
   await ctx.bench("yaml22", "yaml", "parsing", size, async () => {
     Yaml22Parse(data);
   });
   await ctx.bench("yaml22", "yaml", "generation", size, async () => {
     Yaml22Stringify(Yaml22Parse(data));
   });
+}
+
+// per-shape plan specs — the canonical yaml uses symbol-style keys,
+// parsed to ":config"/":host" (leading colon only)
+const YAML_PLANS = {
+  "small": {
+    kind: "map", path: [":config", ":database"],
+    children: [
+      { name: ":host", kind: "str" }, { name: ":port", kind: "int" },
+      { name: ":name", kind: "str" }, { name: ":user", kind: "str" },
+      { name: ":password", kind: "str" },
+    ],
+  },
+  "medium": {
+    kind: "seq", path: [":users"],
+    children: [
+      { name: ":id", kind: "int" }, { name: ":name", kind: "str" },
+      { name: ":email", kind: "str" }, { name: ":created_at", kind: "str" },
+    ],
+  },
+  "large": {
+    kind: "map", path: [":dataset", ":records"],
+    children: [
+      { name: ":id", kind: "int" }, { name: ":timestamp", kind: "str" },
+    ],
+  },
+};
+
+const yamlPlans = {};
+async function yeptrisPlanFor(data) {
+  const stem = data.includes(":users") ? "medium" : data.includes(":dataset") ? "large" : "small";
+  return (yamlPlans[stem] ??= await yeptris.compilePlan(YAML_PLANS[stem]));
 }
 
 async function benchToml(ctx, size) {
@@ -184,17 +245,21 @@ async function main() {
   out += "benchmark_config:\n";
   out += "  name: js-full\n";
   out += "  formats: [json, xml, html, yaml, toml]\n";
-  out += "  operations: [parsing, generation, xpath]\n";
+  out += "  operations: [parsing, generation, xpath, validation, plan]\n";
   out += "benchmark_result:\n";
   out += "  serializers:\n";
   out += `    - {name: leptris, format: xml, version: '${LEPTRIS_VERSION}', features: {xpath: true, wasm: true}}\n`;
   out += `    - {name: teptris, format: toml, version: '${TEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: yeptris, format: yaml, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: leptris-xsd, format: xml, version: '${LEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: leptris-schematron, format: xml, version: '${LEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: yeptris-plan, format: yaml, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: native-json, format: json, version: '${runtimeVersion}', features: {native: true}}\n`;
   out += `    - {name: fast-xml-parser, format: xml, version: '${FXP_VERSION}', features: {}}\n`;
   out += `    - {name: htmlparser2, format: html, version: '${HP2_VERSION}', features: {}}\n`;
   out += `    - {name: yaml22, format: yaml, version: '${YAML22_VERSION}', features: {}}\n`;
   out += `    - {name: smol-toml, format: toml, version: '${SMOL_TOML_VERSION}', features: {}}\n`;
-  for (const op of ["parsing", "generation", "xpath"]) {
+  for (const op of ["parsing", "generation", "xpath", "validation", "plan"]) {
     out += `  ${op}:\n`;
     for (const row of rows) {
       if (row.op === op) {
