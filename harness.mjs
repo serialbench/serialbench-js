@@ -230,12 +230,44 @@ async function benchToml(ctx, size) {
   await ctx.bench("teptris", "toml", "generation", size, async () => {
     ctx.teptris.dump(ctx.teptris.loads(data));
   });
+  // compiled plan face (descriptor materialization — planBuild takes a
+  // rows array, strings are scalars, { name, rows } recurses),
+  // mirroring the py/C/ruby faces
+  await ctx.bench("teptris-plan", "toml", "plan", size, async () => {
+    const plan = teptrisPlanFor(ctx, data);
+    ctx.teptris.planWalk(plan, data);
+  });
   await ctx.bench("smol-toml", "toml", "parsing", size, async () => {
     SmolTomlParse(data);
   });
   await ctx.bench("smol-toml", "toml", "generation", size, async () => {
     SmolTomlStringify(SmolTomlParse(data));
   });
+}
+
+// per-shape plan specs — the canonical toml fixtures
+const TOML_PLANS = {
+  "small": [
+    { name: "config", rows: [
+      { name: "database", rows: ["host", "port", "name", "user", "password"] },
+      { name: "cache", rows: ["enabled", "ttl"] },
+    ] },
+  ],
+  "medium": [
+    { name: "users", rows: ["id", "name", "email", "created_at"] },
+  ],
+  "large": [
+    { name: "dataset", rows: [
+      { name: "header", rows: ["created", "count", "format"] },
+      { name: "records", rows: ["id", "timestamp"] },
+    ] },
+  ],
+};
+
+const tomlPlans = {};
+function teptrisPlanFor(ctx, data) {
+  const stem = /\[\[users\]\]/.test(data) ? "medium" : /\[dataset\]|\[\[.*records\]\]/.test(data) ? "large" : "small";
+  return (tomlPlans[stem] ??= ctx.teptris.planBuild(TOML_PLANS[stem]));
 }
 
 function osFamily() {
@@ -299,6 +331,7 @@ async function main() {
   out += `    - {name: yeptris-plan, format: yaml, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: yeptris-tape, format: json, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: yeptris-json-plan, format: json, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: teptris-plan, format: toml, version: '${TEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: native-json, format: json, version: '${runtimeVersion}', features: {native: true}}\n`;
   out += `    - {name: fast-xml-parser, format: xml, version: '${FXP_VERSION}', features: {}}\n`;
   out += `    - {name: htmlparser2, format: html, version: '${HP2_VERSION}', features: {}}\n`;
