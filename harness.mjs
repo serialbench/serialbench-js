@@ -66,9 +66,47 @@ async function benchJson(ctx, size) {
     const tape = await yeptris.parseJsonTape(data);
     await tape.columns();
   });
+  // compiled plan face (json grammar; same core the yaml face walks) —
+  // parse+walk per iteration, mirroring the ruby/py/C faces
+  await ctx.bench("yeptris-json-plan", "json", "plan", size, async () => {
+    const plan = await jsonPlanFor(data);
+    const r = plan.walk(data);
+    r.free();
+  });
   await ctx.bench("native-json", "json", "generation", size, async () => {
     JSON.stringify(JSON.parse(data));
   });
+}
+
+// per-shape plan specs — the canonical json fixtures (plain key names)
+const JSON_PLANS = {
+  "small": {
+    kind: "map", path: ["config", "database"],
+    children: [
+      { name: "host", kind: "str" }, { name: "port", kind: "int" },
+      { name: "name", kind: "str" }, { name: "user", kind: "str" },
+      { name: "password", kind: "str" },
+    ],
+  },
+  "medium": {
+    kind: "seq", path: ["users"],
+    children: [
+      { name: "id", kind: "int" }, { name: "name", kind: "str" },
+      { name: "email", kind: "str" }, { name: "created_at", kind: "str" },
+    ],
+  },
+  "large": {
+    kind: "map", path: ["dataset", "records"],
+    children: [
+      { name: "id", kind: "int" }, { name: "timestamp", kind: "str" },
+    ],
+  },
+};
+
+const jsonPlans = {};
+async function jsonPlanFor(data) {
+  const stem = data.includes('"users"') ? "medium" : data.includes('"dataset"') ? "large" : "small";
+  return (jsonPlans[stem] ??= await yeptris.compilePlan(JSON_PLANS[stem]));
 }
 
 async function benchXml(ctx, size) {
@@ -260,6 +298,7 @@ async function main() {
   out += `    - {name: leptris-schematron, format: xml, version: '${LEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: yeptris-plan, format: yaml, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: yeptris-tape, format: json, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: yeptris-json-plan, format: json, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: native-json, format: json, version: '${runtimeVersion}', features: {native: true}}\n`;
   out += `    - {name: fast-xml-parser, format: xml, version: '${FXP_VERSION}', features: {}}\n`;
   out += `    - {name: htmlparser2, format: html, version: '${HP2_VERSION}', features: {}}\n`;
