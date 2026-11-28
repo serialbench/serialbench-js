@@ -61,6 +61,11 @@ async function benchJson(ctx, size) {
   await ctx.bench("native-json", "json", "parsing", size, async () => {
     JSON.parse(data);
   });
+  // columnar tape parse (#48): one C pass, records instead of a tree
+  await ctx.bench("yeptris-tape", "json", "parsing", size, async () => {
+    const tape = await yeptris.parseJsonTape(data);
+    await tape.columns();
+  });
   await ctx.bench("native-json", "json", "generation", size, async () => {
     JSON.stringify(JSON.parse(data));
   });
@@ -254,6 +259,7 @@ async function main() {
   out += `    - {name: leptris-xsd, format: xml, version: '${LEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: leptris-schematron, format: xml, version: '${LEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: yeptris-plan, format: yaml, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
+  out += `    - {name: yeptris-tape, format: json, version: '${YEPTRIS_VERSION}', features: {wasm: true}}\n`;
   out += `    - {name: native-json, format: json, version: '${runtimeVersion}', features: {native: true}}\n`;
   out += `    - {name: fast-xml-parser, format: xml, version: '${FXP_VERSION}', features: {}}\n`;
   out += `    - {name: htmlparser2, format: html, version: '${HP2_VERSION}', features: {}}\n`;
